@@ -95,3 +95,16 @@ app.UseAuthentication(); // Each request can be authenticated using ASP MVC Iden
 app.UseIdentityServer(); // We want this application to be an OAuth server
 ```
 
+Add Migrations
+--------------
+Using Entity Framework we are going to setup the database, and generate some migrations so that the database structure can be recreated reliably.
+```
+dotnet ef migrations add Initial -c ConfigurationDbContext -o Migrations\ConfigurationDb
+dotnet ef database update -c ConfigurationDbContext
+dotnet ef migrations add Initial -c PersistedGrantDbContext -o Migrations\PersistedGrantDb
+dotnet ef database update -c PersistedGrantDbContext
+dotnet ef migrations add Initial -c AuthDbContext -o Migrations\AuthDb
+dotnet ef database update -c AuthDbContext
+```
+
+There is one pair of commands for each db context, each migration is called Inital because I'm not sure what else to call the first one, and I have specified where the migration files should live with the `-o` options. As there is more than one DbContext in this project, 1 created and 2 imported from nuget packages, we need to specify which one we are using with the `-c` option.
