@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using AuthService.Models;
+using AuthService.Seed;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -37,6 +38,7 @@ namespace AuthService
                 options.MinimumSameSitePolicy = SameSiteMode.None;
             });
 
+            services.Configure<SeedOptions>(Configuration.GetSection("Seed"));
             var connectionString = Configuration.GetConnectionString("Default");
 
             services.AddDbContext<AuthDbContext>(

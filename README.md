@@ -108,3 +108,58 @@ dotnet ef database update -c AuthDbContext
 ```
 
 There is one pair of commands for each db context, each migration is called Inital because I'm not sure what else to call the first one, and I have specified where the migration files should live with the `-o` options. As there is more than one DbContext in this project, 1 created and 2 imported from nuget packages, we need to specify which one we are using with the `-c` option.
+
+Seed Data
+---------
+I'm keeping everything relating to seeding this project I have placed under /Seed and could probably be moved to a seperate application at some point but this will do for now. There is also an extension method that can be called on an `IWebHost` which will let us use a completely ready application to seed our data. 
+
+First in `Program.cs` we check to see if there is the string `seed` in the arguments list, if there is yay! but don't pass it on to the rest of the application, build the WebHost then if we need to seed we will. To use it I have added a launch configuration that is much like the default but adds the argument that we're looking for. I have also prevented the browser from launching (I find it is a pain) and changed the default hosting url to `http://localhost:7000` because most of the time we will be developing on an API which will sit at the default port 5000.
+
+The rest of this change is essentailly ready configuration data and selectively apply it to the relevant `DBSet` in the `ConfigurationDbContext`. The config is worth talking over, it is added to the DI system with the following call: `services.Configure<SeedOptions>(Configuration.GetSection("Seed"));` in `Startup.cs`, and the relevant config is as follows:
+```
+"Seed": {
+    "AdminUsers": [ // This part of the configuration lives in the secrets.json managed by the secret manager
+	  {
+        "Email": "admin@myservice.com",
+        "Password": "$Password123"
+      }
+	],
+    "ApiResources": [
+      {
+        "Name": "PrimaryApi",
+        "DisplayName": "The primary api",
+        "Scopes": [ 
+          {
+			// Which scopes this API "owns", you could have "AdminScope" and "RegularUserScope" and then only permit "AdminApp1" and "3rdPartyAdminApp" to request "AdminScope" then only have "PublicFirstPartyClient" have access to "RegularUserScope"
+            "Name": "PrimaryApiScope"
+          }
+        ]
+      }
+    ],
+    "Clients": [
+      {
+        "ClientId": "48fafcf5-8f7c-4853-aee6-709405d162e0", // This doesn't really matter as long as it is unique
+        "ClientName": "Primary Api Swagger Page",
+        "AllowedGrantTypes": [ "implicit" ], // We need the simplist login type (here is username/password, gimme token) for a swagger endpoing
+        "RedirectUris": [
+          "http://localhost:5000/swagger/oauth2-redirect.html", // Where to send the token
+          "https://production.myapi.com/swagger/oauth2-redirect.html" // There can be as many as needed
+        ],
+        "AllowedScopes": [
+          "PrimaryApiScope" // The Scope that we want to have access too, what will be in our JWT token
+        ],
+        "AllowAccessTokensViaBrowser": true,
+        "RequireConsent": false  // This is a 1st party application (and we haven't setup the UI for allowing consent) so we don't need user consent.
+      }
+    ]
+  }
+```
+
+Now when we run the app, the database should be updated, we should then be able to visit 
+`http://localhost:7000/connect/authorize/callback?response_type=token&state&client_id=48fafcf5-8f7c-4853-aee6-709405d162e0&scope=PrimaryApiScope&redirect_uri=http%3A%2F%2Flocalhost%3A5000%2Fswagger%2Foauth2-redirect.html`
+
+We will then be prompted to login, then we'll be redirected to something like
+
+`http://localhost:5000/swagger/oauth2-redirect.html#access_token=eyJhbGciOiJSUzI1NiIsImtpZCI6ImQ1Njk5MDIzMjBlOTY2YWM2NzNlZTc4ZGY5MTVkYjE2IiwidHlwIjoiSldUIn0.eyJuYmYiOjE1NjgwNTc0NjIsImV4cCI6MTU2ODA2MTA2MiwiaXNzIjoiaHR0cHM6Ly9sb2NhbGhvc3Q6NzAwMSIsImF1ZCI6WyJodHRwczovL2xvY2FsaG9zdDo3MDAxL3Jlc291cmNlcyIsIlByaW1hcnlBcGkiXSwiY2xpZW50X2lkIjoiNDhmYWZjZjUtOGY3Yy00ODUzLWFlZTYtNzA5NDA1ZDE2MmUwIiwic3ViIjoiMTZlMWY1ODQtYmViNy00ZDlkLTg2YzAtYzE2MDNhNGZlOTQyIiwiYXV0aF90aW1lIjoxNTY4MDU2MjM1LCJpZHAiOiJsb2NhbCIsInNjb3BlIjpbIlByaW1hcnlBcGlTY29wZSJdLCJhbXIiOlsicHdkIl19.c3niOUTjK9Pq9Kghx-u1mwVzR55b-FFlzh-X5smaENWssbW-58oaJvLw4yEoRqQ6yCf6VFtVobOinVQMXnFc6HcD4mfeElR8cTr27vv3xUv2Aif2byaeVjHLDhAeSB1O_qyXIGI43QwtWCjITlqEygGOnBHJ3KI0egqd6u8gGA7hlRzIFXfB653rgBrmZeB7l1rglRsObFbxnjwf2R-lvBNJaE7KKclFM1bALcizn44Xlff69O_bsD4b_Zoi3BlV3XCR2u2xJM4lifDiD-maarFs8wgYH88agtKojnxG-Z5QCLUFKwarZbFokQQtktqGs5UgTcJ1GXTc2-3cr4FMLg&token_type=Bearer&expires_in=3600&scope=PrimaryApiScope`
+
+We can now use this token to ensure our Resource is protected in the next step.

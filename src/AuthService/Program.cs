@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using AuthService.Seed;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -12,9 +13,22 @@ namespace AuthService
 {
     public class Program
     {
-        public static void Main(string[] args)
+        private const string SeedArgument = "seed";
+        public static async Task Main(string[] args)
         {
-            CreateWebHostBuilder(args).Build().Run();
+            var seed = args.Any(x => x == SeedArgument);
+            if (seed)
+            {
+                args = args.Except(new[] { SeedArgument }).ToArray();
+            }
+
+            var host = CreateWebHostBuilder(args).Build();
+            if (seed)
+            {
+                await host.SeedData();
+            }
+                
+            await host.RunAsync();
         }
 
         public static IWebHostBuilder CreateWebHostBuilder(string[] args) =>
