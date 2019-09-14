@@ -163,3 +163,171 @@ We will then be prompted to login, then we'll be redirected to something like
 `http://localhost:5000/swagger/oauth2-redirect.html#access_token=eyJhbGciOiJSUzI1NiIsImtpZCI6ImQ1Njk5MDIzMjBlOTY2YWM2NzNlZTc4ZGY5MTVkYjE2IiwidHlwIjoiSldUIn0.eyJuYmYiOjE1NjgwNTc0NjIsImV4cCI6MTU2ODA2MTA2MiwiaXNzIjoiaHR0cHM6Ly9sb2NhbGhvc3Q6NzAwMSIsImF1ZCI6WyJodHRwczovL2xvY2FsaG9zdDo3MDAxL3Jlc291cmNlcyIsIlByaW1hcnlBcGkiXSwiY2xpZW50X2lkIjoiNDhmYWZjZjUtOGY3Yy00ODUzLWFlZTYtNzA5NDA1ZDE2MmUwIiwic3ViIjoiMTZlMWY1ODQtYmViNy00ZDlkLTg2YzAtYzE2MDNhNGZlOTQyIiwiYXV0aF90aW1lIjoxNTY4MDU2MjM1LCJpZHAiOiJsb2NhbCIsInNjb3BlIjpbIlByaW1hcnlBcGlTY29wZSJdLCJhbXIiOlsicHdkIl19.c3niOUTjK9Pq9Kghx-u1mwVzR55b-FFlzh-X5smaENWssbW-58oaJvLw4yEoRqQ6yCf6VFtVobOinVQMXnFc6HcD4mfeElR8cTr27vv3xUv2Aif2byaeVjHLDhAeSB1O_qyXIGI43QwtWCjITlqEygGOnBHJ3KI0egqd6u8gGA7hlRzIFXfB653rgBrmZeB7l1rglRsObFbxnjwf2R-lvBNJaE7KKclFM1bALcizn44Xlff69O_bsD4b_Zoi3BlV3XCR2u2xJM4lifDiD-maarFs8wgYH88agtKojnxG-Z5QCLUFKwarZbFokQQtktqGs5UgTcJ1GXTc2-3cr4FMLg&token_type=Bearer&expires_in=3600&scope=PrimaryApiScope`
 
 We can now use this token to ensure our Resource is protected in the next step.
+
+Protecting the Api
+------------------
+So first of all I'm going to make some config changes, https will be used by default which means the port numbers change from 5000 -> 5001 and 7000 -> 7001. I updated the seed config data in the AuthService appsettings.json but you can just update the dbo.ClinetRedirectUris table.
+
+With that out of the way onto the code.
+
+I created a new Asp MVC project and added it to the solution, it is fairly bare with a single `Controllers/ValuesController.cs`, `Program.cs`, `Startup.cs` and `appsettings.json`. We don't need to touch Program.cs and only one change is needed to Values controller:
+```
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Api.Controllers
+{
+ 	[Authorize]
+	[Route("api/[controller]")]
+	[ApiController]
+	public class ValuesController : ControllerBase
+	{
+...
+```
+The Authorize attribute means all request going to this controller must from a User, what a User is is down to us, we're going to define that in just a moment, we need some config values first:
+```
+"Authentication": {
+    "Authority": "https://localhost:7001",
+    "ClientId": "48fafcf5-8f7c-4853-aee6-709405d162e0",
+    "Audience": "PrimaryApi",
+	"Scope": "PrimaryApiScope"
+}
+```
+Adding this section to `appsettings.json` keeps our code clean of magic variables.
+
+- `Authority` is an OpenIdConnect term for who we, the application, trust. How the application does that is by speaking to its OpenId Configuration, we can see what this looks like by going to `https://localhost:7001/.well-known/openid-configuration` when the AuthService is running, ASP MVC can use this "introspection endpoint" to do a lot of the heavy lifting for us. 
+- `ClientId` is our client, as the API isn't going to be involved in the Authentication dance we need to tell the AuthService who we are. Using this Id the AuthService will validate that the request the User will make to login will be one we would approve of, it does this by looking at the `redirect_uri` and it must be one defined in our Client definition (currently in the seed data).
+- `Audience` is something we are going to use to verify that the token recieved from the AuthService is "correct" as in the token has been made for "us" because we are the Resource being protected. In this case the token must have been made to access the PrimaryApi.
+- `Scope` in a very similar manner to `Audience` we need the token to contain this scope value or we will reject it as invalid. Scope can be shared between multiple audiences, think of "SeeAccountProfile" scope.
+
+Now its going to get complicated... Onto `Startup.cs`! First in `ConfigureServices`:
+```
+public void ConfigureServices(IServiceCollection services)
+{
+	// I have added this to help me debug things, it is not necessary and should not be enabled for production
+	IdentityModelEventSource.ShowPII = true;
+	services
+		// We want to Authenticate that requests have come from someone we trust
+		.AddAuthentication(options =>
+		{
+			// We are going to do this by looking for asking the middleware with the name: JwtBearerDefaults.AuthenticationScheme (Bearer) to look into this for us
+			options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+			// We are also going to ask the middleware to attempt to authenticate requests whenever it can
+			options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+		})
+		// This is the middleware in question, if we gave this a name (first param) then we would have to update the DefaultAuthenticateScheme and DefaultChallengeScheme to have the same value.
+		.AddJwtBearer(options =>
+		{
+			// We expect the token to be for the correct Resource - us!
+			options.Audience = Configuration["Authentication:Audience"];
+			// This is who we trust to provide this info, as described above we will validate the token using the information from the "introspection endpoint". This will also be used to 
+			options.Authority = Configuration["Authentication:Authority"];
+		});
+
+	services.AddMvc().SetCompatibilityVersion(CompatibilityVersion.Version_2_2);
+}
+```
+
+now in `Configure` we need to add a single line:
+```
+// We want all requests from this point onwards to be protected by the authentication middleware if necessary
+app.UseAuthentication();
+app.UseHttpsRedirection();
+app.UseMvc();
+```
+
+To try and make it a bit easier I'm going to install `NSwag.AspNetCore` currently at 13.0.6 so we can see a friendly page where we can see Auth working/not working. In `ConfigureServices` we can add:
+
+```
+// This is a "standard" (one of many) on how to document APIs, it pulls information from our Controllers to generate this
+services.AddOpenApiDocument(options =>
+{
+	// Our API has protection (I'm calling it the same thing as our AuthenicationScheme for consistency)
+	options.AddSecurity(JwtBearerDefaults.AuthenticationScheme, new OpenApiSecurityScheme
+	{
+		// We are the unified modern OAuth2 implementation provided by IdentityServer4
+		Type = OpenApiSecuritySchemeType.OAuth2,
+		// Because the UI has an outstanding issue we need to tell it to use a different token name for reasons...
+		ExtensionData = new Dictionary<string, object>
+		{
+			["x-tokenName"] = "id_token"
+		},
+		Description = "Authenticate using our Auth Service",
+		// Sadly the UI can't use the introspection endpoint so we have to set this ourself
+		AuthorizationUrl = $"{Configuration["Authentication:Authority"]}/connect/authorize",
+		// We need to say exactly which scopes we want the user to access, glad it is in a Configuration value now!
+		Scopes = new Dictionary<string, string>
+		{
+			[$"{Configuration["Authentication:Scope"]}"] = "The Scope we need the token to have"
+		}
+	});
+
+	// Now we hook anything with an [Authorize] attribute into the definition we created above. NSwag does this like so:
+	options.OperationProcessors.Add(new AspNetCoreOperationSecurityScopeProcessor(JwtBearerDefaults.AuthenticationScheme));
+});
+```
+
+Now to `Configure` somewhere before `UseMvc()` we need to add
+```
+app
+	// we are adding the generated OpenApi document at the URI /swagger/v1/swagger.json
+	.UseOpenApi() 
+	// add /swagger (remember from the seed data?! where the friendly UI is added 
+	.UseSwaggerUi3(settings =>
+	{
+		// We do however need to tell it that we know some details to help the user login
+		settings.OAuth2Client = new OAuth2ClientSettings
+		{
+			ClientId = Configuration["Authentication:ClientId"],
+		};
+	});
+```
+
+Phew! Now we can set our two projects to startup up at once, right click the solution file > "Set Starup Projects", then choose "Multiple startup projects, then for each project dropdown choose "Start". Oh I also need to update the `launchSettings.json` for the new API before we run
+```
+{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "Api": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "launchUrl": "api/values",
+      "applicationUrl": "https://localhost:5001;http://localhost:5000",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
+```
+
+Now we should be able to click "Start" or F5 to begin. Now we should be able to visit:
+https://localhost:5001/swagger 
+Now if you expand the "Values" pane, you should see an unlocked padlock on the 5 operations available to you. Expand any one of those, click "Try it out", then click "Execute", you should see something like
+```
+401 Undocumented
+Error: Unauthorized
+Response headers
+
+content-length: 0 
+date: Sat, 14 Sep 2019 10:13:27 GMT 
+server: Kestrel  www-authenticate: Bearer 
+```
+
+Now click on Authorize, check the scope you want to access (you do want to access it), then click authorize. A new tab will open, you may be asked to login if you weren't already, but if you already are logged in or after you login/create an account you will jump back to the page with an action to "Logout". We can just dismiss this prompt and click "Execute" again, if all is well then we should get back
+```
+200	
+Response body
+
+[
+  "value1",
+  "value2"
+]
+
+Response headers
+
+ content-type: application/json; charset=utf-8 
+ date: Sat, 14 Sep 2019 10:16:13 GMT
+ server: Kestrel  transfer-encoding: chunked 
+```
